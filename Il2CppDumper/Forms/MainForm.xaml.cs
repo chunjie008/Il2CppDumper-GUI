@@ -131,9 +131,10 @@ namespace Il2CppDumper
                 Mach_O = "1";
 
             Log("Read config...");
-            if (File.Exists(basePath + "config.json"))
+            string configFile = Path.Combine(basePath, "config.json");
+            if (File.Exists(configFile))
             {
-                config = JsonConvert.DeserializeObject<Config>(File.ReadAllText(basePath + "config.json"));
+                config = JsonConvert.DeserializeObject<Config>(File.ReadAllText(configFile));
             }
             else
             {
