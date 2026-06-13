@@ -1,7 +1,7 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 	<PropertyGroup>
 		<TargetFramework>net6.0-windows</TargetFramework>
-		<OutputType>WinExe</OutputType>
+		<OutputType>Exe</OutputType>
 		<AssemblyName>Il2CppDumper GUI</AssemblyName>
 		<MapFileExtensions>true</MapFileExtensions>
 		<ApplicationRevision>0</ApplicationRevision>

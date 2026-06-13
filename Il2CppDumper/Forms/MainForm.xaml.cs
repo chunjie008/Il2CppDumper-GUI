@@ -723,12 +723,18 @@ namespace Il2CppDumper
         #region Logging
         public static void Log(string text)
         {
-            main.Log(text);
+            if (main != null)
+                main.Log(text);
+            else
+                Console.WriteLine(text);
         }
 
         public static void Log(string text, object text2)
         {
-            main.Log(string.Format(text, text2));
+            if (main != null)
+                main.Log(string.Format(text, text2));
+            else
+                Console.WriteLine(string.Format(text, text2));
         }
 
         //Color list /*http://www.flounder.com/csharp_color_table.htm*/
