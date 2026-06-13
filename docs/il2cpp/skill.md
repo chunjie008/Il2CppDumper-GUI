@@ -25,8 +25,9 @@ description: Unity Il2Cpp 游戏逆向 — Il2CppDumper dump + Ghidra 导入分�
 
 ```powershell
 # dump 到 il2cpp_dump 目录
-& "E:\vscodeProject\Il2CppDumper-GUI\bin\Release\Il2CppDumper GUI.exe" `
-    "GameAssembly.dll" "global-metadata.dat" "il2cpp_dump" --scripts
+# ⚠ 必须使用 net6.0-windows 子目录中的 exe（父目录 exe 缺少配套 DLL）
+& "E:\vscodeProject\Il2CppDumper-GUI\Il2CppDumper\bin\Release\net6.0-windows\Il2CppDumper GUI.exe" `
+    "libil2cpp.so" "global-metadata.dat" "il2cpp_dump" --scripts
 
 # ⚠ 如果 struct 文件 (script.json 等) 未出现在输出目录，
 #   去上层目录找（CLI 的 TrimEnd bug）
@@ -61,199 +62,96 @@ description: Unity Il2Cpp 游戏逆向 — Il2CppDumper dump + Ghidra 导入分�
 
 ## 第二步：Ghidra 无头全自动分析（推荐）
 
-**一条命令完成**：导入 → 自动分析 → Il2Cpp 函数重命名 → 网络函数反编译输出
+### 分析策略
+
+⚠ **关键问题**：`-noanalysis` 模式下 Ghidra 不做反汇编，函数体为空（`body size = 1`），反编译器无法工作。必须按需反汇编。
+
+**推荐两步法**：
+1. 导入 + 全量重命名（快速，无需分析）
+2. 按关键词/模式/大小筛选目标函数，对其做反汇编 + 反编译
+
+### 导入（快速，无分析）
 
 ```powershell
 $GHIDRA = "D:\yingyong\ghidra_12.1.2_PUBLIC"
-$DUMP   = "D:\path\to\il2cpp_dump"
-$BINARY = "D:\path\to\GameAssembly.dll"
+$DUMP   = "E:\vscodeProject\test\il2cpp_dump"
+$BINARY = "E:\vscodeProject\test\libil2cpp.so"
+$PROJ   = "E:\vscodeProject\test\ghidra_proj"
 
-# 首次：导入 + 分析 + 重命名 + 反编译
-& "$GHIDRA\support\analyzeHeadless.bat" `
-    "D:\ghidra_proj" "GameAnalysis" `
-    -import $BINARY -overwrite `
+# 首次导入
+& "$GHIDRA\support\analyzeHeadless.bat" $PROJ GameAnalysis `
+    -import $BINARY -overwrite -noanalysis
+```
+
+### 通用 Il2CppAnalyze v2（无硬编码地址）
+
+**功能**：自动重命名全部 Il2Cpp 函数 + 灵活筛选目标反编译
+
+```powershell
+# 默认：反编译 top-10 最大函数
+& "$GHIDRA\support\analyzeHeadless.bat" $PROJ GameAnalysis `
+    -process libil2cpp.so -noanalysis `
     -postScript Il2CppAnalyze.java "$DUMP\script.json" "$DUMP\decompile" `
     -scriptPath $DUMP
 
-# 后续：仅重命名 + 反编译（项目已存在）
-& "$GHIDRA\support\analyzeHeadless.bat" `
-    "D:\ghidra_proj" "GameAnalysis" `
-    -process GameAssembly.dll -noanalysis `
+# 按关键词筛选（网络通信相关）
+& "$GHIDRA\support\analyzeHeadless.bat" ... `
     -postScript Il2CppAnalyze.java "$DUMP\script.json" "$DUMP\decompile" `
-    -scriptPath $DUMP
+    --keywords Socket,Network,Message,Recv,Send,Connect,Packet
+
+# 按正则匹配
+& "$GHIDRA\support\analyzeHeadless.bat" ... `
+    -postScript Il2CppAnalyze.java "$DUMP\script.json" "$DUMP\decompile" `
+    --pattern '.*NetLogic.*'
+
+# 反编译 top 100 最大函数（适合全量分析）
+& "$GHIDRA\support\analyzeHeadless.bat" ... `
+    -postScript Il2CppAnalyze.java "$DUMP\script.json" "$DUMP\decompile" `
+    --top 100 --max 100 --timeout 15
+
+# 按指定地址反编译
+& "$GHIDRA\support\analyzeHeadless.bat" ... `
+    -postScript Il2CppAnalyze.java "$DUMP\script.json" "$DUMP\decompile" `
+    --addresses 0x1F1CD0,0x1F0540,0x1F1A50
 ```
 
-### Il2CppAnalyze.java 脚本
+**选项说明**：
 
-功能：
-1. 从 `script.json` 读取 5.5 万+ 个 Il2Cpp 函数地址，自动重命名 + 创建函数
-2. 反编译 15 个网络关键函数到 `.c` 文件（可根据游戏修改 `KEY_FUNCS` 数组）
+| 选项 | 说明 |
+|------|------|
+| `--keywords <csv>` | 反编译名称包含任一关键词的函数 |
+| `--pattern <regex>` | 反编译名称匹配正则的函数 |
+| `--top <N>` | 反编译按 body size 最大的 N 个函数 |
+| `--addresses <csv>` | 反编译指定十六进制地址（覆盖其他筛选） |
+| `--max <N>` | 最多反编译 N 个函数（默认 50，防爆） |
+| `--timeout <N>` | 每个函数的反编译超时秒数（默认 30） |
+| `--no-disasm` | 跳过反汇编（只重命名，不做反编译） |
 
-脚本源码（保存为 `Il2CppAnalyze.java` 放到 `scriptPath` 目录）：
+> 不指定筛选参数时，默认反编译 top-10 最大函数。
 
-```java
-// @category: Il2Cpp
-import java.io.*;
-import ghidra.program.model.symbol.SourceType;
-import ghidra.program.model.symbol.SymbolTable;
-import ghidra.program.model.listing.Function;
-import ghidra.program.model.listing.FunctionManager;
-import ghidra.program.model.address.Address;
-import ghidra.app.decompiler.*;
-import ghidra.app.util.headless.HeadlessScript;
+### Il2CppAnalyze.java 脚本源码
 
-public class Il2CppAnalyze extends HeadlessScript {
-    // 网络关键函数地址（按需修改）
-    static final long[] KEY_FUNCS = {
-        0x1F1CD0L, 0x1F0540L, 0x1F1A50L, 0x1F25C0L,
-        0x1F0320L, 0x1F20D0L, 0x1F1460L, 0x1F16F0L,
-        0x1F1AD0L, 0x1EAA40L, 0x1EAB20L, 0x1E8BC0L,
-        0x1ECD90L, 0x1ECBC0L, 0x1F3760L,
-    };
+> 保存到 `scriptPath` 目录（如 `E:\vscodeProject\test\il2cpp_dump\Il2CppAnalyze.java`）
 
-    public void run() throws Exception {
-        String[] args = getScriptArgs();
-        if (args.length < 1) {
-            println("Usage: Il2CppAnalyze.java <script.json> [decompile_out_dir]");
-            return;
-        }
-        int count = renameFromJson(args[0]);
-        if (args.length > 1) decompileFunctions(args[1]);
-        println("Done! Renamed " + count + " methods.");
-    }
-
-    private int renameFromJson(String jsonPath) throws Exception {
-        File f = new File(jsonPath);
-        if (!f.exists()) { println("ERROR: file not found"); return 0; }
-        println("Reading " + f.length() + " bytes...");
-        byte[] raw = new byte[(int)f.length()];
-        new FileInputStream(f).read(raw);
-        String content = new String(raw, "UTF-8");
-
-        int sm = content.indexOf("\"ScriptMethod\"");
-        if (sm < 0) { println("ERROR: ScriptMethod not found"); return 0; }
-        int col = content.indexOf(':', sm);
-        int as = content.indexOf('[', col);
-        if (as < 0) { println("ERROR: no bracket"); return 0; }
-
-        Address base = currentProgram.getImageBase();
-        SymbolTable st = currentProgram.getSymbolTable();
-        FunctionManager fm = currentProgram.getFunctionManager();
-        SourceType ud = SourceType.USER_DEFINED;
-        int count = 0, pos = as + 1;
-
-        while (pos < content.length()) {
-            int ob = content.indexOf('{', pos);
-            if (ob < 0) break;
-            int cb = matchBrace(content, ob);
-            if (cb < 0) break;
-            String obj = content.substring(ob, cb + 1);
-            String name = getStr(obj, "\"Name\"");
-            String addrStr = getNum(obj, "\"Address\"");
-            if (name != null && addrStr != null) {
-                try {
-                    Address addr = base.add(Long.parseLong(addrStr));
-                    String label = name.replace(' ', '-');
-                    try { st.createLabel(addr, label, ud); } catch (Exception e) { }
-                    if (fm.getFunctionAt(addr) == null)
-                        try { createFunction(addr, label); } catch (Exception e) { }
-                    count++;
-                } catch (Exception e) {
-                    println("Error: " + name + " - " + e.getMessage());
-                }
-            }
-            if (count % 2000 == 0) {
-                monitor.setMessage(count + " renamed...");
-                if (monitor.isCancelled()) break;
-            }
-            pos = cb + 1;
-        }
-        println("Renamed " + count + " methods.");
-        return count;
-    }
-
-    private void decompileFunctions(String outDir) throws Exception {
-        new File(outDir).mkdirs();
-        Address base = currentProgram.getImageBase();
-        FunctionManager fm = currentProgram.getFunctionManager();
-        DecompInterface dc = new DecompInterface();
-        dc.openProgram(currentProgram);
-
-        for (long off : KEY_FUNCS) {
-            Address addr = base.add(off);
-            Function func = fm.getFunctionAt(addr);
-            if (func == null) { println("NOT FOUND: 0x" + Long.toHexString(off)); continue; }
-            String name = func.getName();
-            println("Decompiling: " + name);
-
-            DecompileResults res = dc.decompileFunction(func, 60, monitor);
-            String code;
-            if (res != null && res.getDecompiledFunction() != null)
-                code = res.getDecompiledFunction().getC();
-            else {
-                code = "// Decompilation failed";
-                if (res != null && res.getErrorMessage() != null && !res.getErrorMessage().isEmpty())
-                    code += "\n// " + res.getErrorMessage();
-            }
-
-            String fn = name.replace("$$", "_").replace(' ', '_')
-                           .replaceAll("[^a-zA-Z0-9_.-]", "_");
-            if (!fn.endsWith(".c")) fn += ".c";
-
-            PrintWriter pw = new PrintWriter(new File(outDir, fn), "UTF-8");
-            pw.println("// " + name + " @ " + addr);
-            pw.println(code); pw.close();
-            println("  -> " + outDir + "/" + fn + " (" + code.length() + " chars)");
-        }
-        dc.dispose();
-        println("Decompiled " + KEY_FUNCS.length + " functions.");
-    }
-
-    private int matchBrace(String s, int start) {
-        int depth = 1; boolean inStr = false;
-        for (int i = start + 1; i < s.length(); i++) {
-            char c = s.charAt(i);
-            if (inStr) { if (c == '\\') i++; else if (c == '"') inStr = false; }
-            else { if (c == '"') inStr = true; else if (c == '{') depth++;
-                   else if (c == '}') { depth--; if (depth == 0) return i; } }
-        }
-        return -1;
-    }
-
-    private String getStr(String s, String key) {
-        int idx = s.indexOf(key);
-        if (idx < 0) return null;
-        int q1 = s.indexOf('"', s.indexOf(':', idx) + 1);
-        int q2 = s.indexOf('"', q1 + 1);
-        return (q1 < 0 || q2 < 0) ? null : s.substring(q1 + 1, q2);
-    }
-
-    private String getNum(String s, String key) {
-        int idx = s.indexOf(key);
-        if (idx < 0) return null;
-        int pos = s.indexOf(':', idx) + 1;
-        while (pos < s.length() && s.charAt(pos) <= ' ') pos++;
-        StringBuilder sb = new StringBuilder();
-        while (pos < s.length() && (Character.isDigit(s.charAt(pos)) || s.charAt(pos) == '-'))
-            sb.append(s.charAt(pos++));
-        return sb.length() > 0 ? sb.toString() : null;
-    }
-}
-```
+脚本已更新为通用版本，完整源码见：
+`E:\vscodeProject\test\il2cpp_dump\Il2CppAnalyze.java`
 
 ### 输出示例
 
 ```
-Il2CppAnalyze.java> Reading 24066071 bytes...
-Il2CppAnalyze.java> ScriptMethod array starts at offset 21
-Il2CppAnalyze.java> Renamed 55998 methods.
-Il2CppAnalyze.java> Decompiling: SocketClient$$OnRecieveMessageDeal
-Il2CppAnalyze.java>   -> decompile/SocketClient_OnRecieveMessageDeal.c (1180 chars)
-Il2CppAnalyze.java> Decompiling: SocketClient$$NetLogic
-Il2CppAnalyze.java>   -> decompile/SocketClient_NetLogic.c (19731 chars)
-...
-Il2CppAnalyze.java> Decompiled 15 functions.
-Il2CppAnalyze.java> Done! Renamed 55998 methods.
+Il2CppAnalyze v2 (universal)
+  script.json: E:\...\il2cpp_dump\script.json
+  out dir:     E:\...\decompile
+  keywords: Socket, Network, Message, Recv, Send
+Renamed 137113 methods.
+Decompiling 42 of 42 matched functions...
+  [1/42] UnityEngine.Networking.NetworkTransport$$Send  (keyword 'Send')
+  -> decompile/UnityEngine_Networking_NetworkTransport_Send.c (10234 chars)
+  [2/42] SocketClient$$OnRecieveMessageDeal  (keyword 'Recv')
+  -> decompile/SocketClient_OnRecieveMessageDeal.c (8451 chars)
+  ...
+Results: 38 decompiled, 4 failed  => E:\...\decompile
+Done!
 ```
 
 ---
@@ -305,8 +203,10 @@ for t in data["t"]:
    | `.jpy` | Jython (Python 2.7) | ✅ | 内置但不如 Java 稳定 |
 3. **类名匹配**: `public class X` 必须匹配文件名 `X.java`
 4. **事务**: 任何修改程序的操作必须在 `startTransaction` / `endTransaction` 内
-5. **反编译器**: `DecompInterface` 用完必须 `dispose()`
-6. **Il2CPP 内存模型**: Il2Cpp 对象实例字段偏移从 `0x10` 开始，`0x00`=klass, `0x08`=monitor
+5. **反编译器前提**: `-noanalysis` 模式下函数体为空（body size = 1），反编译前必须调用 `disassemble(addr)`。Il2CppAnalyze.java 自动处理。
+6. **反编译器**: `DecompInterface` 用完必须 `dispose()`
+7. **JDK 兼容**: 实测 Ghidra 12.1.2 兼容 JDK 25（仅有 `sun.misc.Unsafe` deprecated 警告）
+8. **Il2CPP 内存模型**: Il2Cpp 对象实例字段偏移从 `0x10` 开始，`0x00`=klass, `0x08`=monitor
 
 ---
 
@@ -314,6 +214,12 @@ for t in data["t"]:
 
 ### 函数名为 FUN_1800XXXXX
 Il2Cpp 编译后的函数名本身就是匿名的，运行 `Il2CppAnalyze.java` 或 `ghidra_with_struct.py` 后自动重命名。
+
+### 反编译器报错 / body size = 1
+`-noanalysis` 模式下 Ghidra 不做反汇编，函数体仅含入口标签，反编译器无法工作。`Il2CppAnalyze.java` 会自动对目标函数调用 `disassemble()` 解决，但全量反汇编 13 万函数会极慢。**推荐用 `--keywords`/`--top` 筛选目标。**
+
+### GccExceptionAnalyzer 风暴（数万条 ERROR）
+Unity Il2Cpp 编译的 Linux `.so` 在全量分析时，`GccExceptionAnalyzer` 会对大量地址反复报错，分析极慢（可能超过 10 分钟）。这是正常现象，不影响结果。建议 `-noanalysis` + 按需反汇编。
 
 ### 保护/混淆的游戏
 1. 先用内存 dump 工具 dump `libil2cpp.so`
@@ -325,6 +231,12 @@ PC 平台是 `GameAssembly.dll` 而非 `libil2cpp.so`。提供 `--code-reg` 和 
 
 ### script.json 未生成
 ClI 的 `TrimEnd` 会去掉输出路径末尾的分隔符，导致文件写入到**上层目录**。去输出目录的父目录找，或手动指定路径时不要加末尾斜杠。
+
+### Il2CppDumper GUI.exe 无法执行
+`.exe` 为 .NET 单文件发布但 DLL 在 `net6.0-windows` 子目录。请直接运行子目录中的 `.exe`：
+```powershell
+& "Il2CppDumper-GUI\Il2CppDumper\bin\Release\net6.0-windows\Il2CppDumper GUI.exe" ...
+```
 
 ### 模拟执行验证
 需要分析 Il2Cpp 函数行为时，可以用 `unidbg` (`E:\vscodeProject\unidbg`) 模拟执行 libil2cpp.so 中的函数。
