@@ -345,6 +345,20 @@ namespace Il2CppDumper
                 }
                 Directory.SetCurrentDirectory(basePath); //Fix read-only directory permission
             }
+            if (config.GenerateAIDump)
+            {
+                Log("Generate AI dump...");
+                try
+                {
+                    new Il2CppAIDumper(executor).Dump(outputDir);
+                    Log("Done!", Brushes.Chartreuse);
+                }
+                catch (Exception ex)
+                {
+                    Log("There was an error trying to generate AI dump: " + ex.Message, Brushes.Orange);
+                    Log(ex.ToString(), Brushes.Orange);
+                }
+            }
         }
 
         private void Dumper(string file, string metadataPath, string outputPath)

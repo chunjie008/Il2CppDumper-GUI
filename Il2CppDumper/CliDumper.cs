@@ -23,6 +23,7 @@ namespace Il2CppDumper
                 Console.Error.WriteLine("  --no-dump-cs            Skip dump.cs generation");
                 Console.Error.WriteLine("  --no-struct             Skip struct file generation");
                 Console.Error.WriteLine("  --no-dummy-dll          Skip dummy DLL generation");
+                Console.Error.WriteLine("  --no-ai                Skip AI dump (dump_ai.json) generation");
                 Console.Error.WriteLine("  --fast                  Enable fast struct generation mode");
                 Console.Error.WriteLine("  --threads <N>           Worker thread count (0=auto)");
                 Console.Error.WriteLine("  --scripts               Copy analysis scripts to output");
@@ -40,6 +41,7 @@ namespace Il2CppDumper
             bool genDumpCs = true;
             bool genStruct = true;
             bool genDummyDll = true;
+            bool genAIDump = true;
             bool fastMode = false;
             int workerThreads = 0;
             bool copyScripts = false;
@@ -68,6 +70,9 @@ namespace Il2CppDumper
                         break;
                     case "--no-dummy-dll":
                         genDummyDll = false;
+                        break;
+                    case "--no-ai":
+                        genAIDump = false;
                         break;
                     case "--fast":
                         fastMode = true;
@@ -279,6 +284,20 @@ namespace Il2CppDumper
                     Console.Error.WriteLine("Error generating dummy dll: " + ex.Message);
                 }
                 Directory.SetCurrentDirectory(basePath);
+            }
+
+            if (config.GenerateAIDump && genAIDump)
+            {
+                Console.WriteLine("Generate AI dump...");
+                try
+                {
+                    new Il2CppAIDumper(executor).Dump(outputDir);
+                    Console.WriteLine("Done!");
+                }
+                catch (Exception ex)
+                {
+                    Console.Error.WriteLine("Error generating AI dump: " + ex.Message);
+                }
             }
 
             if (copyScripts)
