@@ -32,10 +32,27 @@ Il2CppDumper <binary> <metadata> <output> [options]
 | `--no-dump-cs` | 跳过 dump.cs 生成 |
 | `--no-struct` | 跳过结构体文件生成 |
 | `--no-dummy-dll` | 跳过 DummyDll 生成 |
-| `--no-ai` | 跳过 `dump_ai.json` 生成 |
+| `--no-ai` | 跳过 AI dump 生成（等效于 `--ai-format none`） |
+| `--ai-format <fmt>` | AI dump 格式：`json`、`sqlite`、`all`（默认）、`none` |
 | `--fast` | 启用快速 struct 模式（跳过 metadata-usage 扫描） |
 | `--threads <N>` | struct 生成的工作线程数（`0`=自动） |
 | `--scripts` | 拷贝分析脚本（ghidra.py/ida.py/hopper-py3.py 等）到输出目录 |
+
+**示例：**
+
+```bash
+# 完整 dump（含 JSON + SQLite AI 输出）
+Il2CppDumper libil2cpp.so global-metadata.dat output/ --scripts
+
+# 只生成 AI SQLite 格式（缩小输出体积）
+Il2CppDumper libil2cpp.so global-metadata.dat output/ --no-dump-cs --no-struct --no-dummy-dll --ai-format sqlite
+
+# 只生成 AI JSON 格式
+Il2CppDumper libil2cpp.so global-metadata.dat output/ --ai-format json
+
+# 跳过 AI dump（旧版兼容）
+Il2CppDumper libil2cpp.so global-metadata.dat output/ --no-ai
+```
 
 ### 第二步：Ghidra 导入
 
@@ -89,7 +106,8 @@ for t in data["t"]:
 | 文件 | 用途 |
 |------|------|
 | `script.json` | Ghidra/IDA/Binja 脚本主输入 |
-| `dump_ai.json` | 紧凑 JSON，含类层级/方法/字段/偏移/字符串 |
+| `dump_ai.json` | 紧凑 JSON，含类层级/方法/字段/偏移/字符串，内置 AI prompt |
+| `dump_ai.db` | SQLite 格式，支持索引查询，大型游戏 AI 查询首选 |
 | `dump.cs` | C# 伪代码，人工阅读 |
 | `il2cpp.h` | 结构体定义 C 头文件 |
 | `stringliteral.json` | 字符串字面量 |
@@ -112,6 +130,33 @@ for t in data["t"]:
 | `t[].pts[].n/g/s` | 属性名/getter/setter | string |
 | `t[].nts[]` | 嵌套类型索引列表 | array |
 | `strs[].id/v` | 字符串 ID/值 | number/string |
+
+### dump_ai.db SQLite 查询
+
+`dump_ai.db` 是 SQLite 格式，适合 AI Agent 或 CLI 工具直接查询：
+
+```bash
+# 查找特定类的所有方法及地址
+sqlite3 dump_ai.db "SELECT m.name, m.signature, m.va FROM methods m JOIN types t ON m.type_id=t.id WHERE t.name='PlayerController'"
+
+# 查找虚函数表（vtable）
+sqlite3 dump_ai.db "SELECT slot, name, va FROM methods WHERE type_id=42 AND is_virtual=1 ORDER BY slot"
+
+# 按 assembly 统计类型数
+sqlite3 dump_ai.db "SELECT image, COUNT(*) FROM types GROUP BY image ORDER BY COUNT(*) DESC"
+
+# 搜索字符串字面量
+sqlite3 dump_ai.db "SELECT id, value FROM strings WHERE value LIKE '%password%'"
+
+# 查找所有实现某接口的类型
+sqlite3 dump_ai.db "SELECT t.name FROM types t JOIN type_interfaces ti ON t.id=ti.type_id WHERE ti.interface_name='IDisposable'"
+
+# 查看嵌套类型
+sqlite3 dump_ai.db "SELECT t.name AS parent, nt.name AS nested FROM nested_types n JOIN types t ON n.type_id=t.id JOIN types nt ON n.nested_type_id=nt.id"
+
+# 获取类型完整信息
+sqlite3 dump_ai.db ".headers on" "SELECT * FROM types WHERE name='PlayerController'"
+```
 
 ## Ghidra 脚本开发注意事项
 

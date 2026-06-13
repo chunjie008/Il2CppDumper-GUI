@@ -345,12 +345,13 @@ namespace Il2CppDumper
                 }
                 Directory.SetCurrentDirectory(basePath); //Fix read-only directory permission
             }
-            if (config.GenerateAIDump)
+            var aiFmt = string.IsNullOrEmpty(config.AIDumpFormat) ? "all" : config.AIDumpFormat;
+            if (aiFmt != "none")
             {
                 Log("Generate AI dump...");
                 try
                 {
-                    new Il2CppAIDumper(executor).Dump(outputDir);
+                    new Il2CppAIDumper(executor).Dump(outputDir, aiFmt);
                     Log("Done!", Brushes.Chartreuse);
                 }
                 catch (Exception ex)

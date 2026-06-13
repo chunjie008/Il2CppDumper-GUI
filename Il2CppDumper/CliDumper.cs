@@ -23,7 +23,8 @@ namespace Il2CppDumper
                 Console.Error.WriteLine("  --no-dump-cs            Skip dump.cs generation");
                 Console.Error.WriteLine("  --no-struct             Skip struct file generation");
                 Console.Error.WriteLine("  --no-dummy-dll          Skip dummy DLL generation");
-                Console.Error.WriteLine("  --no-ai                Skip AI dump (dump_ai.json) generation");
+                Console.Error.WriteLine("  --no-ai                 Skip AI dump generation (all formats)");
+                Console.Error.WriteLine("  --ai-format <fmt>       AI dump format: json, sqlite, all (default: all)");
                 Console.Error.WriteLine("  --fast                  Enable fast struct generation mode");
                 Console.Error.WriteLine("  --threads <N>           Worker thread count (0=auto)");
                 Console.Error.WriteLine("  --scripts               Copy analysis scripts to output");
@@ -41,7 +42,7 @@ namespace Il2CppDumper
             bool genDumpCs = true;
             bool genStruct = true;
             bool genDummyDll = true;
-            bool genAIDump = true;
+            string aiFormat = "all";
             bool fastMode = false;
             int workerThreads = 0;
             bool copyScripts = false;
@@ -72,7 +73,15 @@ namespace Il2CppDumper
                         genDummyDll = false;
                         break;
                     case "--no-ai":
-                        genAIDump = false;
+                        aiFormat = "none";
+                        break;
+                    case "--ai-format":
+                        aiFormat = args[++i].ToLowerInvariant();
+                        if (aiFormat != "json" && aiFormat != "sqlite" && aiFormat != "all" && aiFormat != "none")
+                        {
+                            Console.Error.WriteLine($"Invalid AI format: {args[i]}. Valid: json, sqlite, all, none");
+                            return 1;
+                        }
                         break;
                     case "--fast":
                         fastMode = true;
@@ -286,17 +295,22 @@ namespace Il2CppDumper
                 Directory.SetCurrentDirectory(basePath);
             }
 
-            if (config.GenerateAIDump && genAIDump)
+            if (aiFormat != "none")
             {
-                Console.WriteLine("Generate AI dump...");
-                try
+                var fmt = string.IsNullOrEmpty(config.AIDumpFormat) ? "all" : config.AIDumpFormat;
+                if (aiFormat != "all") fmt = aiFormat;
+                if (fmt != "none")
                 {
-                    new Il2CppAIDumper(executor).Dump(outputDir);
-                    Console.WriteLine("Done!");
-                }
-                catch (Exception ex)
-                {
-                    Console.Error.WriteLine("Error generating AI dump: " + ex.Message);
+                    Console.WriteLine("Generate AI dump...");
+                    try
+                    {
+                        new Il2CppAIDumper(executor).Dump(outputDir, fmt);
+                        Console.WriteLine("Done!");
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.Error.WriteLine("Error generating AI dump: " + ex.Message);
+                    }
                 }
             }
 

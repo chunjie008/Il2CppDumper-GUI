@@ -17,6 +17,6 @@
         public double ForceVersion { get; set; } = 24.3;
         public bool ForceDump { get; set; } = false;
         public bool NoRedirectedPointer { get; set; } = false;
-        public bool GenerateAIDump { get; set; } = true;
+        public string AIDumpFormat { get; set; } = "all";
     }
 }

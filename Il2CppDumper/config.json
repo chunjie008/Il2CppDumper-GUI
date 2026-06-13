@@ -14,5 +14,5 @@
   "ForceVersion": 16,
   "ForceDump": false,
   "NoRedirectedPointer": false,
-  "GenerateAIDump": true
+  "AIDumpFormat": "all"
 }
